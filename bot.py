@@ -1,10 +1,17 @@
+import io
 import os
 import asyncio
-from aiogram import Bot, Dispatcher, F, types
+from email.mime import image
+from unittest import result
+
+from aiogram import (Bot, Dispatcher, F, types, Router)
+from aiogram.types import BufferedInputFile, Message
 from aiogram.filters import CommandStart
 from docx2pdf import convert
 from PIL import Image
 from dotenv import load_dotenv
+from rembg import remove
+
 
 load_dotenv()
 
@@ -12,6 +19,18 @@ BOT_TOKEN = os.getenv("TOKEN")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+router = Router()
+
+dp.include_router(router)
+
+def remove_bg_from_bytes(input_bytes: bytes) -> bytes:
+    input_image = Image.open(io.BytesIO(input_bytes))
+    output_image = remove(input_image)
+    output_buffer = io.BytesIO()
+    output_image.save(output_buffer, format="PNG")
+    return output_buffer.getvalue()
+
+
 
 def convert_word_to_pdf(input_path: str, output_path: str):
     convert(input_path, output_path)
@@ -28,8 +47,25 @@ CONVERTERS = {
     ".doc": convert_word_to_pdf,
     ".jpg": convert_image_to_pdf,
     ".jpeg": convert_image_to_pdf,
-    ".png": convert_word_to_pdf,
+    ".png": convert_image_to_pdf,
 }
+
+@router.message(F.photo)
+async def handle_photo(message: Message, bot: Bot):
+    await message.answer(
+        f"Обрабатываю изображение, убираю фон...\n\n"
+    )
+    photo = message.photo[-1]
+    file_io = io.BytesIO()
+    await bot.download(photo, destination=file_io)
+    input_bytes = file_io.getvalue()
+    result_bytes = remove_bg_from_bytes(input_bytes)
+    document = BufferedInputFile(result_bytes, filename="no_background.png")
+    await message.answer_document(
+        document=document,
+        caption="Готово! Фон удален.")
+
+
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     formats =", ".join(CONVERTERS.keys())
@@ -75,6 +111,11 @@ async def handle_document(message: types.Message):
             os.remove(input_path)
         if os.path.exists(output_path):
             os.remove(output_path)
+
+async def main():
+    await dp.start_polling(bot)
+if __name__ == "__main__":
+    asyncio.run(main())
 
 
 
